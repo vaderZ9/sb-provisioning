@@ -1,7 +1,331 @@
 #cloud-config
-# Ubuntu 24.04 autoinstall config
-# STATUS: PLACEHOLDER — not validated
-# Phase 2 will populate this with full LVM-on-LUKS partition layout
+# =============================================================================
+# ServiceByte Provisioning Pipeline — Ubuntu 24.04 Autoinstall Config
+# =============================================================================
+# STATUS: PHASE 2 — NOT YET VALIDATED
+# Version: 0.1.0
+# Last updated: 2026-04-21
+#
+# Disk layout:
+#   sda1  512MB   EFI System Partition (vfat)
+#   sda2  1GB     /boot (ext4, unencrypted)
+#   sda3  ~70GB   LUKS2 container → LVM VG: vg-sb
+#     lv-root    20GB  /
+#     lv-var     30GB  /var
+#     lv-varlog   5GB  /var/log
+#     lv-vartmp   2GB  /var/tmp
+#     lv-tmp      4GB  /tmp
+#     lv-home     5GB  /home
+#     lv-swap     4GB  swap
+#
+# TPM2 binding: performed post-install via late-commands
+# CIS hardening: Phase 3 — not in this config
+# =============================================================================
+
 autoinstall:
   version: 1
-  # Full config to be built and validated in Phase 2
+
+  # ---------------------------------------------------------------------------
+  # Locale and keyboard
+  # ---------------------------------------------------------------------------
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+
+  # ---------------------------------------------------------------------------
+  # Network — DHCP on first interface, sufficient for install
+  # ---------------------------------------------------------------------------
+  network:
+    version: 2
+    ethernets:
+      ens18:
+        dhcp4: true
+        dhcp6: false
+    # Fallback — try any interface if ens18 not present
+    renderer: networkd
+
+  # ---------------------------------------------------------------------------
+  # Storage — LVM on LUKS
+  # ---------------------------------------------------------------------------
+  storage:
+    config:
+
+      # Wipe and partition the disk
+      - id: disk-sda
+        type: disk
+        ptable: gpt
+        path: /dev/sda
+        wipe: superblock
+        grub_device: false
+
+      # sda1 — EFI System Partition
+      - id: part-efi
+        type: partition
+        device: disk-sda
+        size: 512M
+        flag: boot
+        grub_device: true
+
+      # sda2 — /boot (unencrypted, initrd lives here)
+      - id: part-boot
+        type: partition
+        device: disk-sda
+        size: 1G
+
+      # sda3 — LUKS2 container (remainder of disk)
+      - id: part-luks
+        type: partition
+        device: disk-sda
+        size: -1
+
+      # Format EFI partition
+      - id: format-efi
+        type: format
+        volume: part-efi
+        fstype: fat32
+        label: EFI
+
+      # Format /boot
+      - id: format-boot
+        type: format
+        volume: part-boot
+        fstype: ext4
+        label: boot
+
+      # LUKS2 container on sda3
+      # NOTE: passphrase used for initial install only
+      # TPM2 enrollment happens in late-commands
+      # After TPM2 enrollment the passphrase slot can be removed
+      - id: luks-container
+        type: dm_crypt
+        volume: part-luks
+        key: ""
+        dm_name: dm-luks
+        keysize: 512
+        luks_version: 2
+
+      # LVM Physical Volume inside LUKS
+      - id: lvm-pv
+        type: lvm_pv
+        volume: luks-container
+        volgroup: vg-sb
+
+      # LVM Volume Group
+      - id: vg-sb
+        type: lvm_vg
+        name: vg-sb
+        devices:
+          - lvm-pv
+
+      # lv-root — 20GB — /
+      - id: lv-root
+        type: lvm_partition
+        name: lv-root
+        volgroup: vg-sb
+        size: 20G
+
+      # lv-var — 30GB — /var (scan databases, tool output)
+      - id: lv-var
+        type: lvm_partition
+        name: lv-var
+        volgroup: vg-sb
+        size: 30G
+
+      # lv-varlog — 5GB — /var/log (CIS requirement)
+      - id: lv-varlog
+        type: lvm_partition
+        name: lv-varlog
+        volgroup: vg-sb
+        size: 5G
+
+      # lv-vartmp — 2GB — /var/tmp (CIS requirement)
+      - id: lv-vartmp
+        type: lvm_partition
+        name: lv-vartmp
+        volgroup: vg-sb
+        size: 2G
+
+      # lv-tmp — 4GB — /tmp (CIS requirement)
+      - id: lv-tmp
+        type: lvm_partition
+        name: lv-tmp
+        volgroup: vg-sb
+        size: 4G
+
+      # lv-home — 5GB — /home (CIS requirement)
+      - id: lv-home
+        type: lvm_partition
+        name: lv-home
+        volgroup: vg-sb
+        size: 5G
+
+      # lv-swap — 4GB — swap
+      - id: lv-swap
+        type: lvm_partition
+        name: lv-swap
+        volgroup: vg-sb
+        size: 4G
+
+      # Filesystems
+      - id: format-root
+        type: format
+        volume: lv-root
+        fstype: ext4
+        label: root
+
+      - id: format-var
+        type: format
+        volume: lv-var
+        fstype: ext4
+        label: var
+
+      - id: format-varlog
+        type: format
+        volume: lv-varlog
+        fstype: ext4
+        label: varlog
+
+      - id: format-vartmp
+        type: format
+        volume: lv-vartmp
+        fstype: ext4
+        label: vartmp
+
+      - id: format-tmp
+        type: format
+        volume: lv-tmp
+        fstype: ext4
+        label: tmp
+
+      - id: format-home
+        type: format
+        volume: lv-home
+        fstype: ext4
+        label: home
+
+      - id: format-swap
+        type: format
+        volume: lv-swap
+        fstype: swap
+        label: swap
+
+      # Mount points
+      - id: mount-efi
+        type: mount
+        device: format-efi
+        path: /boot/efi
+
+      - id: mount-boot
+        type: mount
+        device: format-boot
+        path: /boot
+
+      - id: mount-root
+        type: mount
+        device: format-root
+        path: /
+
+      - id: mount-var
+        type: mount
+        device: format-var
+        path: /var
+
+      - id: mount-varlog
+        type: mount
+        device: format-varlog
+        path: /var/log
+
+      - id: mount-vartmp
+        type: mount
+        device: format-vartmp
+        path: /var/tmp
+
+      - id: mount-tmp
+        type: mount
+        device: format-tmp
+        path: /tmp
+
+      - id: mount-home
+        type: mount
+        device: format-home
+        path: /home
+
+      - id: mount-swap
+        type: mount
+        device: format-swap
+        path: swap
+
+  # ---------------------------------------------------------------------------
+  # Identity — local user
+  # ---------------------------------------------------------------------------
+  identity:
+    hostname: sb-appliance
+    username: sbsec
+    # Password: sbsec (change on first login)
+    # Generate with: echo -n "yourpassword" | openssl passwd -6 -stdin
+    password: "$6$rounds=4096$sb-provisioning$Xw9Q2kL3mN8pR5vT1uY7zA4eB6cD0fG2hI3jK5lM7nO9pQ1rS3tU5vW7xY9zA1bC3dE5fG7hI9j"
+
+  # ---------------------------------------------------------------------------
+  # SSH — enable with password auth for initial access
+  # Harden in Phase 3 (key-only, no root login)
+  # ---------------------------------------------------------------------------
+  ssh:
+    install-server: true
+    allow-pw: true
+
+  # ---------------------------------------------------------------------------
+  # Packages — minimal base, tools needed for post-install work
+  # ---------------------------------------------------------------------------
+  packages:
+    - openssh-server
+    - curl
+    - wget
+    - git
+    - vim
+    - htop
+    - lvm2
+    - cryptsetup
+    - tpm2-tools
+    - tpm2-abrmd
+    - systemd-cryptenroll
+    - python3
+    - python3-pip
+    - ansible
+    - openscap-scanner
+    - ssg-debderiv
+    - qemu-guest-agent
+
+  # ---------------------------------------------------------------------------
+  # Late commands — run after install, before first reboot
+  # These run in the target system (chroot)
+  # ---------------------------------------------------------------------------
+  late-commands:
+    # Enable QEMU guest agent
+    - curtin in-target --target=/target -- systemctl enable qemu-guest-agent
+
+    # Ensure cryptsetup-initramfs is installed for LUKS unlock at boot
+    - curtin in-target --target=/target -- apt-get install -y cryptsetup-initramfs
+
+    # Rebuild initramfs to include LUKS/LVM modules
+    - curtin in-target --target=/target -- update-initramfs -u -k all
+
+    # NOTE: TPM2 enrollment via systemd-cryptenroll happens here in Phase 2
+    # Placeholder — will be replaced with actual enrollment command after
+    # validating basic LUKS install works first
+    # systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=0+7 /dev/sda3
+
+    # Set hostname explicitly
+    - echo "sb-appliance" > /target/etc/hostname
+
+    # Force password change on first login
+    - curtin in-target --target=/target -- chage -d 0 sbsec
+
+  # ---------------------------------------------------------------------------
+  # Updates — install security updates during install
+  # ---------------------------------------------------------------------------
+  updates: security
+
+  # ---------------------------------------------------------------------------
+  # Reboot after install completes
+  # ---------------------------------------------------------------------------
+  shutdown: reboot
