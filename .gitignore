@@ -1,0 +1,5 @@
+hardening/reports/
+.DS_Store
+*.key
+*.pem
+*.secret

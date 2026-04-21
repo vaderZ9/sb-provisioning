@@ -1,0 +1,7 @@
+#cloud-config
+# Ubuntu 24.04 autoinstall config
+# STATUS: PLACEHOLDER — not validated
+# Phase 2 will populate this with full LVM-on-LUKS partition layout
+autoinstall:
+  version: 1
+  # Full config to be built and validated in Phase 2
